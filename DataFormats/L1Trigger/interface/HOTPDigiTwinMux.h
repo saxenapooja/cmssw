@@ -1,5 +1,5 @@
-#ifndef DataFormats_L1Trigger_HOTPDigiTwinMux_h
-#define DataFormats_L1Trigger_HOTPDigiTwinMux_h
+#ifndef HOTPDIGI_TWINMUX_H
+#define HOTPDIGI_TWINMUX_H
 
 #include <boost/cstdint.hpp>
 #include <ostream>
@@ -18,25 +18,6 @@ class HOTPDigiTwinMux {
 
   HOTPDigiTwinMux() {theTP_HO=0;}
   HOTPDigiTwinMux(uint64_t data) {theTP_HO = data;}
-
-  /// ////////////////////////////
-  /// Summary of the bits
-  /// ////////////////////////////
-  /// raw ieta value = theTP_HO &0 0x1F
-  /// sign of ieta (int: +/- 1) = (theTP_HO &0 0x10)?(-1):(+1))
-  /// absolute value of ieta = (theTP_HO &0 0x000F)
-  /// raw iphi value = (theTP_HO>>5) &0 0x007F;
-  /// bx() = (theTP_HO>>12) &0 0x1;
-  /// bx signn = ( ( (theTP_HO>>13) &0 0x1) ?(-1):(+1));
-  /// mip value = (theTP_HO>>14) &0 0x1;
-  /// valid bit = (theTP_HO>>15) &0 0x1;
-  /// raw wheel value = (theTP_HO>>16) &0 0x7;
-  /// sign of wheel (int: +/- 1) =  ( ( (theTP_HO>>18) &0 0x1) ?(-1):(+1));
-  /// absolute value of wheel = (theTP_HO>>16) &0 0x03;
-  /// sector value = (theTP_HO>>19) &0 0xF;
-  /// index = (theTP_HO>>23) &0 0x1F;
-  /// link value = (theTP_HO>>28) &0 0x3;
-
   HOTPDigiTwinMux(int ieta, int iphi, int bx, int mip, int validbit, int wheel, int sector, int index, int link);
 
   const HcalDetId id() const { return HcalDetId(HcalOuter,ieta(),iphi(),4); }
@@ -91,10 +72,12 @@ class HOTPDigiTwinMux {
   int sector() const {return (theTP_HO>>19)&0xF; }
   
   /// get the index
-  int index() const {return (theTP_HO>>23)&0x1F; } //channel index in Twinmux protocal 
+  //  int index() const {return (theTP_HO>>23)&0x1F; } //channel index in Twinmux protocal 
+  int index() const {return (theTP_HO>>23)&0x3F; } //channel index in Twinmux protocal 
 
   /// get the link value
-  int link() const {return (theTP_HO>>28)&0x3; } //two link for all HO wheels
+  //  int link() const {return (theTP_HO>>28)&0x3; } //two link for all HO wheels, modified on Jul 11
+  int link() const {return (theTP_HO>>29)&0x7; } //two link for all HO wheels, modified on Jul 11
 
   static const int HO_SECTOR_MAX = 12;
 
