@@ -29,13 +29,23 @@ L1TTwinMuxRawToDigi::L1TTwinMuxRawToDigi(const edm::ParameterSet& pset) :
   DTTM7InputTag_( pset.getParameter<edm::InputTag>("DTTM7_FED_Source") ),
   feds_( pset.getUntrackedParameter<std::vector<int> >("feds", std::vector<int>()) ),
   wheels_( pset.getUntrackedParameter<std::vector<int> >("wheels", std::vector<int>())),
-  amcsecmap_( pset.getUntrackedParameter<std::vector<long long int> >("amcsecmap", std::vector<long long int>()))
+  amcsecmap_( pset.getUntrackedParameter<std::vector<long long int> >("amcsecmap", std::vector<long long int>())),
+  hotpunpacker_(pset.getUntrackedParameter<int>("HOFirstFED",int(FEDNumbering::MINHCALFEDID)),pset.getParameter<int>("firstSample"),pset.getParameter<int>("lastSample")),
+  hofedUnpackList_(pset.getUntrackedParameter<std::vector<int> >("HOFEDs", std::vector<int>())),
+  hofirstFED_(pset.getUntrackedParameter<int>("HcalFirstFED", 724)),
+  unpackerMode_(pset.getUntrackedParameter<int>("UnpackerMode",0)),
+  expectedOrbitMessageTime_(pset.getUntrackedParameter<int>("ExpectedOrbitMessageTime",-1)),
+  silent_(pset.getUntrackedParameter<bool>("silent",false)),
+  complainEmptyData_(pset.getUntrackedParameter<bool>("ComplainEmptyData",true)),
+  inputHOLUTs_(pset.getParameter<edm::FileInPath>("inputHOLUTs")),
+  electronicsMapLabel_(pset.getParameter<std::string>("ElectronicsMap"))
 
 {
     
   produces<L1MuDTChambPhContainer>("PhIn").setBranchAlias("PhIn");
   produces<L1MuDTChambThContainer>("ThIn").setBranchAlias("ThIn");
   produces<L1MuDTChambPhContainer>("PhOut").setBranchAlias("PhOut");
+  produces<HOTwinMuxDigiCollection>();
 
   Raw_token = consumes<FEDRawDataCollection> (DTTM7InputTag_);
  
@@ -56,6 +66,49 @@ L1TTwinMuxRawToDigi::L1TTwinMuxRawToDigi(const edm::ParameterSet& pset) :
     amcsec_.push_back(whmap);
   }
    
+  // HO miniElectronicMap                                                                                                                                                  
+  edm::LogInfo("TwinMux_unpacker") << "Using ASCII LUTs" << inputHOLUTs_.fullPath() << " for HcalTPGCoderULUT initialization";
+  const char* filename = inputHOLUTs_.fullPath().c_str();
+  std::ifstream file(filename, std::ios::in);
+  assert(file.is_open());
+
+  if(!file.is_open()) {
+    std::cout << "Problem opening the LUT file. Program terminating." << std::endl;
+    exit(EXIT_FAILURE);
+  }
+
+  unsigned int nCol=2160;//180; //2160                                                                                                                                     
+  HOEmap hoemap_;
+  int extra;
+  std::string ex = "new";
+  char temp;
+  double te;
+
+  if(dodebug)  std::cout<<"will open the HO LUTs file"<<std::endl;
+  for(size_t i=0; i < nCol; i++) {
+
+    //  while(!file.eof()) {                                                                                                                                                
+    file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    file >> extra>> extra >> hoemap_.iEta >> hoemap_.iPhi >> extra >> extra >> ex >> ex >> hoemap_.iSector>> extra >> extra >> extra >> extra >> extra >> hoemap_.iChan >>
+      temp >> hoemap_.iCrate >> te >> hoemap_.iHTR >> ex >> extra>> extra>> extra>> extra>>extra>>extra >> extra >> extra >> extra >> extra >> extra>> extra >> extra 
+	 >> ex>>hoemap_.iLink  >> hoemap_.iBitloc >> hoemap_.iWheel;
+    
+    hoemap.push_back(hoemap_);
+  }
+
+  if (hofedUnpackList_.empty()) {
+  
+    for (int i=hofirstFED_; i<=FEDNumbering::MAXHCALFEDID; i++) { // 724-731 are HO FEDs                                                                                  
+      hofedUnpackList_.push_back(i);  }
+  }
+
+  hotpunpacker_.setExpectedOrbitMessageTime(expectedOrbitMessageTime_);
+  hotpunpacker_.setMode(unpackerMode_);
+
+  std::ostringstream ss;
+  for (unsigned int i=0; i<hofedUnpackList_.size(); i++) {
+    ss << hofedUnpackList_[i] << " L1TTwinMuxRawToDigi will unpack HOFEDs ( " << ss.str() << ")";
+  }
 }
 
 L1TTwinMuxRawToDigi::~L1TTwinMuxRawToDigi(){}
@@ -71,7 +124,73 @@ void L1TTwinMuxRawToDigi::produce(edm::Event& e,
   L1MuDTChambThContainer::The_Container the_data;
   L1MuDTChambPhContainer::Phi_Container phi_out_data;
 
-  if ( !fillRawData(e, phi_data, the_data, phi_out_data) ) return;
+  /////// HO
+  hoEtaCol.clear();
+  hoPhiCol.clear();
+  hosoiCol.clear();
+  hosampleCol.clear();
+  hodatabitCol.clear();
+
+  //Step-A get input
+  edm::Handle<FEDRawDataCollection> rawraw;
+  //  e.getByToken(tok_data_,rawraw);
+  e.getByToken(Raw_token,rawraw);
+
+  //get the mapping
+  edm::ESHandle<HcalDbService> pSetup; 
+  c.get<HcalDbRecord>().get( pSetup );
+  edm::ESHandle<HcalElectronicsMap> item;
+  c.get<HcalElectronicsMapRcd>().get(electronicsMapLabel_, item);
+  const HcalElectronicsMap* readoutMap = item.product();
+  //  const HcalElectronicsMap*  readoutMap = pSetup->getHcalMapping();
+  
+  HOTPUnpacker::HOCol col;
+  col.etaCont=&hoEtaCol;
+  col.phiCont=&hoPhiCol;
+  col.sampleCont=&hosampleCol;
+  col.soiCont=&hosoiCol;
+  col.databitsCont=&hodatabitCol;
+  auto report = std::make_unique<HcalUnpackerReport>();
+
+  //Step-B unpack all requested FEDs
+  for (std::vector<int>::const_iterator i=hofedUnpackList_.begin(); i!=hofedUnpackList_.end(); i++) {
+    const FEDRawData& fed = rawraw->FEDData(*i);
+    
+    if (fed.size()==0) {
+      std::cout<<"EmptyData" << "No data for FED " << *i;
+      if (complainEmptyData_) {
+	//        if (!silent_) edm::LogWarning("EmptyData") << "No data for FED " << *i;
+        if (!silent_) std::cout<<"EmptyData" << "No data for FED " << *i;
+        report->addError(*i);
+      }
+    } else if (fed.size()<8*3) {
+      std::cout<<"EmptyData" << "Tiny data " << fed.size() << " for FED " << *i;
+      //      if (!silent_) edm::LogWarning("EmptyData") << "Tiny data " << fed.size() << " for FED " << *i;
+      if (!silent_) std::cout<<"EmptyData" << "Tiny data " << fed.size() << " for FED " << *i;
+      report->addError(*i);
+    } else {
+      try {
+	if(dodebug) std::cout<<"will unpack the HOTP for fed:"<<*i<< " & size: "<<fed.size()<<std::endl;
+        hotpunpacker_.unpack(fed,*readoutMap,col, *report,silent_);
+        report->addUnpacked(*i);
+      } catch (cms::Exception& e) {
+	std::cout<<"Unpacking error" << e.what();
+	//        if (!silent_) edm::LogWarning("Unpacking error") << e.what();
+	if (!silent_) std::cout<<"Unpacking error" << e.what();
+        report->addError(*i);
+      } catch (...) {
+	//  if (!silent_) edm::LogWarning("Unpacking exception");
+	if (!silent_) std::cout<<"Unpacking exception";
+        report->addError(*i);
+      }
+    }
+  }
+
+  std::vector<HOTPDigiTwinMux> hotp;
+  Collections colls;
+  colls.tphoCont = &hotp;
+
+  if ( !fillRawData(e, phi_data, the_data, phi_out_data, colls) ) return;
 
   TM7phi_product->setContainer(phi_data);
   TM7the_product->setContainer(the_data);
@@ -81,19 +200,25 @@ void L1TTwinMuxRawToDigi::produce(edm::Event& e,
   e.put(std::move(TM7the_product), "ThIn");
   e.put(std::move(TM7phi_out_product), "PhOut");
 
+  //HO
+  auto hotp_product = std::make_unique<HOTwinMuxDigiCollection>();
+  hotp_product->swap_contents(hotp);
+  hotp_product->sort();
+  e.put(std::move(hotp_product));
 }
 
 
 bool L1TTwinMuxRawToDigi::fillRawData( edm::Event& e,
                                   L1MuDTChambPhContainer::Phi_Container& phi_data,
                                   L1MuDTChambThContainer::The_Container& the_data,
-                                  L1MuDTChambPhContainer::Phi_Container& phi_out_data ) {
+				       L1MuDTChambPhContainer::Phi_Container& phi_out_data,
+Collections& colls ) {
 
   edm::Handle<FEDRawDataCollection> data;
   e.getByToken( Raw_token, data );
 
   for ( size_t w_i = 0; w_i < nfeds_; ++w_i ) {
-    processFed( feds_[w_i], wheels_[w_i], amcsec_[w_i], data, phi_data, the_data, phi_out_data );
+    processFed( feds_[w_i], wheels_[w_i], amcsec_[w_i], data, phi_data, the_data, phi_out_data, colls );
   }
   
   return true;
@@ -130,13 +255,50 @@ int L1TTwinMuxRawToDigi::benAngConversion( int benAng_  ) {
     
 }
 
+
+
+int L1TTwinMuxRawToDigi::FindMipFromHcalFeds(int *ieta, int *iphi) {
+  for (unsigned i=0; i<hoEtaCol.size(); i++) {
+
+    if(*ieta ==hoEtaCol[i] &&  *iphi == hoPhiCol[i]) {
+      if(dodebug)      std::cout<<"Matching done, (eta,phi,soi,mip) : "<<hoEtaCol[i]<<","<< hoPhiCol[i] << ","<<hosoiCol[i]<< ","<<hodatabitCol[i]<< std::endl;
+      if(hodatabitCol[i]  >1  ) return 1;
+      else return 0;
+    }
+  }
+  return 0;
+}
+
+struct HOUnrolledTP { // parts of an HO trigger primitive, unpacked                
+  bool valid,checked;
+  int ieta, iphi, mip, sector, index, link, bx;
+  unsigned int databits;
+  signed int wheel;
+  HOUnrolledTP() {
+    checked=false;
+    ieta=-99;
+    iphi=-99;
+    bx=-99;
+    mip =-99;
+    valid=false;    
+    wheel=-99;
+    sector=-99;
+    index=-99;
+    link=-99;
+  }
+  //  void setbit(int i) { databits|=(1<<i); }
+};
+
+
+
 void L1TTwinMuxRawToDigi::processFed( int twinMuxFed, 
                                  int twinMuxWheel,
                                  std::array<short, 12> twinMuxAmcSec,
                                  edm::Handle<FEDRawDataCollection> data,
                                  L1MuDTChambPhContainer::Phi_Container& phiSegments,
                                  L1MuDTChambThContainer::The_Container& theSegments,
-                                 L1MuDTChambPhContainer::Phi_Container& phioutSegments ) {
+				      L1MuDTChambPhContainer::Phi_Container& phioutSegments,
+Collections& colls ) {
 
   /// Container
   std::vector<long> DTTM7WordContainer;
@@ -685,6 +847,110 @@ void L1TTwinMuxRawToDigi::processFed( int twinMuxFed,
                               << dataWordSub << std::dec
                               << "\t HO WORD\n";          
 
+	int ifDataMarkedGood  = ( dataWordSub >> 57 ) & 0x1;  // positions 57
+	if(!ifDataMarkedGood) continue;
+	
+	int bx_evt=-99;
+	if( tm7eventsize == 75) bx_evt =-1;
+	if( tm7eventsize == 76) bx_evt =0;
+	if( tm7eventsize == 77) bx_evt = 1;
+
+	if(dodebug) 	std::cout <<"wheel, sector : "<< wheel <<", "<< sector<<", "<< bx_evt<<std::endl;
+	
+	long int mipl6 = -999;
+	long int mipl7 = -999;
+	
+	std::vector<long int > mipl6_col;
+	std::vector<long int > mipl7_col;
+	
+	int ncol_l6= -99, ncol_l7=-99;
+	
+	// numbers here refers to the bit-locatioin in Twinmux_payload
+	if(wheel ==2 && wheel >0 ) {ncol_l6 = 14, ncol_l7 = 43;}  //// link1:0-14, link2:29-43 -> wheel:2/-2
+	if(wheel ==1 && wheel >0 ) {ncol_l6 = 17, ncol_l7 = 46;}  //// link1:0-17, link2:29-46 -> wheel:1/-1   
+	if(wheel ==0)              {ncol_l6 = 23, ncol_l7 = 52;}  //// link1:0-23, link2:29-52 -> wheel:0      
+	if(wheel ==-1 ) {ncol_l6 = 17, ncol_l7 = 46;} 
+	if(wheel ==-2 ) {ncol_l6 = 14, ncol_l7 = 43;}
+	
+	
+	//Link-II
+	for(int i =0; i <= ncol_l6; i++) { 
+	  mipl6 =   ( dataWordSub >> i ) & 0x1 ;    
+	  mipl6_col.push_back(mipl6);
+	}
+	
+	//Link-I
+	//	std::cout<<"l2"<<std::endl;
+	for(int i =29; i <= ncol_l7; i++) { // bit for link-2 is always starting with bit:29
+	  mipl7 =   ( dataWordSub >> i ) & 0x1 ;    
+	  mipl7_col.push_back(mipl7);
+	}
+	
+	
+	if(dodebug) {	  std::cout<<"i:"; for (int i : mipl6_col) {std::cout <<i;} std::cout<<""<<std::endl; for (int i : mipl7_col) std::cout <<i; std::cout<<std::endl;
+	  for (int i : mipl6_col) { if(i >0) std::cout<<"YES"<<std::endl;} for (int i : mipl7_col)  { if(i >0) std::cout<<"YES"<<std::endl;} 
+	}
+	
+	HOUnrolledTP unrolled[2160]; //nChan
+	int mipFromHcal = -99;
+	
+	std::vector<HOEmap>::iterator it;
+	int count = 0;
+	
+	//loop over ieta
+	if(dodebug)  std::cout<<"In FindMip(), HCAL FED TP size: "<< hoEtaCol.size()<<std::endl;
+	
+	if(dodebug) std::cout<<"HCAL HO TPs"<<std::endl;
+	for (unsigned i=0; i<hoEtaCol.size(); i++) {
+	  if(dodebug && hodatabitCol[i] >0)    std::cout<<"("<<hoEtaCol[i]<<","<< hoPhiCol[i]<<"), "<<hosoiCol[i]<< ","<<hodatabitCol[i]<< std::endl;
+	}
+	
+	
+	for( it = hoemap.begin( ); it != hoemap.end( ); ++it ) {
+	  if((*it).iWheel == wheel && (*it).iSector == sector) { 
+	    unrolled[count].checked  = true;
+	    unrolled[count].ieta     = (*it).iEta;
+	    unrolled[count].iphi     = (*it).iPhi;
+	    unrolled[count].bx       = bx_evt;
+	    //	    if((*it).iLink ==7)	    std::cout<<(*it).iBitloc<<"\t"<<((*it).iBitloc-29)<<"\t"<<mipl7_col[(*it).iBitloc -29]<<std::endl;
+	    if((*it).iLink ==6)  {unrolled[count].mip      = mipl6_col[(*it).iBitloc];} else if((*it).iLink ==7) {unrolled[count].mip      = mipl7_col[(*it).iBitloc -29];}
+	    unrolled[count].wheel    = (*it).iWheel;
+	    unrolled[count].sector   = (*it).iSector;
+	    unrolled[count].index    = (*it).iBitloc;
+	    unrolled[count].link     = (*it).iLink;
+	    mipFromHcal =  FindMipFromHcalFeds(&(*it).iEta, &(*it).iPhi);
+	    if((*it).iLink ==6) {unrolled[count].valid    = ((mipFromHcal ==  mipl6_col[(*it).iBitloc]) ? true : false); } 
+	    else if((*it).iLink ==7) {
+	      //	      std::cout<<mipFromHcal<<"\t"<<
+	      unrolled[count].valid    = ((mipFromHcal ==  mipl7_col[(*it).iBitloc-29]) ? true : false); 
+	    }
+		if(dodebug) std::cout <<(*it).iWheel <<"\t"<<(*it).iSector<<"\t"<< (*it).iEta<<"\t"<<(*it).iPhi<<"\t"<<(*it).iLink<<"\t"<<(*it).iBitloc<<"\t"<<unrolled[count].mip<<"\t"<<mipFromHcal<<"\t"<<unrolled[count].valid<<std::endl;	
+	    count++;
+	  }
+	  
+	}
+	  if(dodebug)	std::cout<<"count is :"<< count<< std::endl;
+	  
+	  //filling the classes
+	  for (int i=0; i< count; i++) {
+	  if (unrolled[i].mip >0 ) {
+	    
+	    colls.tphoCont->push_back(HOTPDigiTwinMux(unrolled[i].ieta,
+						      unrolled[i].iphi,
+						      unrolled[i].bx,
+						      unrolled[i].mip,
+						      unrolled[i].valid,
+						      unrolled[i].wheel,
+						      unrolled[i].sector,
+						      unrolled[i].index,
+						      unrolled[i].link));
+	    if(dodebug) std::cout<<"******** filled::(eta, phi, mip, valid):"<<unrolled[i].ieta<<"\t"<<unrolled[i].iphi<<"\t"<<unrolled[i].mip<<"\t"<<unrolled[i].valid<<std::endl;
+	    if(dodebug) { if(unrolled[i].valid ==0) std::cout<<"Error!"<< std::endl;}
+	  }
+	  }
+	  
+
+	  
       }//HO word
  
       else if ( selector == 0xF ) { //ERROR word
@@ -822,6 +1088,11 @@ void L1TTwinMuxRawToDigi::calcCRC( long word, int & myC ) {
   for ( int i = 0; i < 16 ; ++i) { tempC = tempC + ( myCRC[i] << i ); }
   myC = tempC;
   return;
+}
+
+
+L1TTwinMuxRawToDigi::Collections::Collections() {
+  tphoCont=0;
 }
 
 
