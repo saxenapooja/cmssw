@@ -12,3 +12,9 @@ discrepancies.
 
 
 L1TTriwMuxRawToDigi unpacks the TwinMux in the Muon system.
+
+
+*** For running the HO TPs code setup:
+Use config /test/TMReader_Test_collision.py
+It has been tested with SingleMuon RAW dataset of 2017B
+The required local emap is in /data directory
