@@ -10,6 +10,8 @@
 //   C. F. Bedoya  - CIEMAT
 //   G. Codispoti -- INFN Bologna
 //   J. Pazzini   -- INFN Padova
+//   P. Saxena    -- DESY Hamburg
+
 //
 //--------------------------------------------------
 
@@ -21,6 +23,7 @@
 
 #include <iostream>
 #include <fstream>
+bool dodebug = true;
 
 L1TTwinMuxRawToDigi::L1TTwinMuxRawToDigi(const edm::ParameterSet& pset) :
 
@@ -115,7 +118,7 @@ L1TTwinMuxRawToDigi::~L1TTwinMuxRawToDigi(){}
 
 void L1TTwinMuxRawToDigi::produce(edm::Event& e, 
                              const edm::EventSetup& c) {
-
+  std::cout<<"dodebug "<< dodebug << std::endl;
   std::unique_ptr<L1MuDTChambPhContainer> TM7phi_product(new L1MuDTChambPhContainer);
   std::unique_ptr<L1MuDTChambThContainer> TM7the_product(new L1MuDTChambThContainer);
   std::unique_ptr<L1MuDTChambPhContainer> TM7phi_out_product(new L1MuDTChambPhContainer);
@@ -262,7 +265,7 @@ int L1TTwinMuxRawToDigi::FindMipFromHcalFeds(int *ieta, int *iphi) {
 
     if(*ieta ==hoEtaCol[i] &&  *iphi == hoPhiCol[i]) {
       if(dodebug)      std::cout<<"Matching done, (eta,phi,soi,mip) : "<<hoEtaCol[i]<<","<< hoPhiCol[i] << ","<<hosoiCol[i]<< ","<<hodatabitCol[i]<< std::endl;
-      if(hodatabitCol[i]  >1  ) return 1;
+      if(hodatabitCol[i] > 1  ) return 1;
       else return 0;
     }
   }
@@ -847,8 +850,9 @@ Collections& colls ) {
                               << dataWordSub << std::dec
                               << "\t HO WORD\n";          
 
-	int ifDataMarkedGood  = ( dataWordSub >> 57 ) & 0x1;  // positions 57
-	if(!ifDataMarkedGood) continue;
+	int GoodDataFlag_L6  = ( dataWordSub >> 28 ) & 0x1;  
+	int GoodDataFlag_L7  = ( dataWordSub >> 57 ) & 0x1;  
+	if(!GoodDataFlag_L6 && !GoodDataFlag_L7 ) continue;
 	
 	int bx_evt=-99;
 	if( tm7eventsize == 75) bx_evt =-1;
@@ -905,48 +909,51 @@ Collections& colls ) {
 	  if(dodebug && hodatabitCol[i] >0)    std::cout<<"("<<hoEtaCol[i]<<","<< hoPhiCol[i]<<"), "<<hosoiCol[i]<< ","<<hodatabitCol[i]<< std::endl;
 	}
 	
-	
-	for( it = hoemap.begin( ); it != hoemap.end( ); ++it ) {
-	  if((*it).iWheel == wheel && (*it).iSector == sector) { 
-	    unrolled[count].checked  = true;
-	    unrolled[count].ieta     = (*it).iEta;
-	    unrolled[count].iphi     = (*it).iPhi;
-	    unrolled[count].bx       = bx_evt;
-	    //	    if((*it).iLink ==7)	    std::cout<<(*it).iBitloc<<"\t"<<((*it).iBitloc-29)<<"\t"<<mipl7_col[(*it).iBitloc -29]<<std::endl;
-	    if((*it).iLink ==6)  {unrolled[count].mip      = mipl6_col[(*it).iBitloc];} else if((*it).iLink ==7) {unrolled[count].mip      = mipl7_col[(*it).iBitloc -29];}
-	    unrolled[count].wheel    = (*it).iWheel;
-	    unrolled[count].sector   = (*it).iSector;
-	    unrolled[count].index    = (*it).iBitloc;
-	    unrolled[count].link     = (*it).iLink;
-	    mipFromHcal =  FindMipFromHcalFeds(&(*it).iEta, &(*it).iPhi);
-	    if((*it).iLink ==6) {unrolled[count].valid    = ((mipFromHcal ==  mipl6_col[(*it).iBitloc]) ? true : false); } 
-	    else if((*it).iLink ==7) {
-	      //	      std::cout<<mipFromHcal<<"\t"<<
-	      unrolled[count].valid    = ((mipFromHcal ==  mipl7_col[(*it).iBitloc-29]) ? true : false); 
+	  for( it = hoemap.begin( ); it != hoemap.end( ); ++it ) {
+	    if((*it).iWheel == wheel && (*it).iSector == sector) { 
+	      unrolled[count].checked  = true;
+	      unrolled[count].ieta     = (*it).iEta;
+	      unrolled[count].iphi     = (*it).iPhi;
+	      unrolled[count].bx       = bx_evt;
+	      if((*it).iLink ==6 && GoodDataFlag_L6)  {unrolled[count].mip = mipl6_col[(*it).iBitloc];} 
+	      else if((*it).iLink ==7 && GoodDataFlag_L7) {unrolled[count].mip = mipl7_col[(*it).iBitloc -29];} 
+	      else unrolled[count].mip = -99;
+	      unrolled[count].wheel    = (*it).iWheel;
+	      unrolled[count].sector   = (*it).iSector;
+	      unrolled[count].index    = (*it).iBitloc;
+	      unrolled[count].link     = (*it).iLink;
+	      mipFromHcal =  FindMipFromHcalFeds(&(*it).iEta, &(*it).iPhi);
+	      if((*it).iLink ==6) {
+		unrolled[count].valid    = ((mipFromHcal ==  mipl6_col[(*it).iBitloc]) ? true : false); 
+	      } 
+	      else if((*it).iLink ==7) {
+		unrolled[count].valid    = ((mipFromHcal ==  mipl7_col[(*it).iBitloc-29]) ? true : false); 
+	      }
+	      if(dodebug) std::cout <<(*it).iWheel <<"\t"<<(*it).iSector<<"\t"<< (*it).iEta<<"\t"<<(*it).iPhi<<"\t"<<(*it).iLink<<"\t"<<(*it).iBitloc<<"\t"<<unrolled[count].mip<<"\t"<<mipFromHcal<<"\t"<<unrolled[count].valid<<std::endl;	
+	      
+	      count++;
 	    }
-		if(dodebug) std::cout <<(*it).iWheel <<"\t"<<(*it).iSector<<"\t"<< (*it).iEta<<"\t"<<(*it).iPhi<<"\t"<<(*it).iLink<<"\t"<<(*it).iBitloc<<"\t"<<unrolled[count].mip<<"\t"<<mipFromHcal<<"\t"<<unrolled[count].valid<<std::endl;	
-	    count++;
+	    
 	  }
-	  
-	}
 	  if(dodebug)	std::cout<<"count is :"<< count<< std::endl;
+	  
 	  
 	  //filling the classes
 	  for (int i=0; i< count; i++) {
-	  if (unrolled[i].mip >0 ) {
-	    
-	    colls.tphoCont->push_back(HOTPDigiTwinMux(unrolled[i].ieta,
-						      unrolled[i].iphi,
-						      unrolled[i].bx,
-						      unrolled[i].mip,
-						      unrolled[i].valid,
-						      unrolled[i].wheel,
+	    if (unrolled[i].mip >0) {
+	      
+	      colls.tphoCont->push_back(HOTPDigiTwinMux(unrolled[i].ieta,
+							unrolled[i].iphi,
+							unrolled[i].bx,
+							unrolled[i].mip,
+							unrolled[i].valid,
+							unrolled[i].wheel,
 						      unrolled[i].sector,
-						      unrolled[i].index,
-						      unrolled[i].link));
-	    if(dodebug) std::cout<<"******** filled::(eta, phi, mip, valid):"<<unrolled[i].ieta<<"\t"<<unrolled[i].iphi<<"\t"<<unrolled[i].mip<<"\t"<<unrolled[i].valid<<std::endl;
-	    if(dodebug) { if(unrolled[i].valid ==0) std::cout<<"Error!"<< std::endl;}
-	  }
+							unrolled[i].index,
+							unrolled[i].link));
+	      if(dodebug) std::cout<<"******** filled::(eta, phi, mip, valid):"<<unrolled[i].ieta<<"\t"<<unrolled[i].iphi<<"\t"<<unrolled[i].mip<<"\t"<<unrolled[i].valid<<std::endl;
+	      if(dodebug) { if(unrolled[i].valid ==0) std::cout<<"Error!"<< std::endl;}
+	    }
 	  }
 	  
 
