@@ -9,6 +9,7 @@
  *   C. F. Bedoya -- CIEMAT
  *   G. Codispoti -- INFN Bologna
  *   J. Pazzini   -- INFN Padova
+ *   P. Saxena    -- DESY Hamburg
  */
 //
 //--------------------------------------------------
@@ -63,20 +64,21 @@ public:
   };
 
   int FindMipFromHcalFeds(int *ieta, int *iphi); 
-  bool dodebug =false;
+  bool dodebug =true;
 
   /// Generate and fill FED raw data for a full event
   bool fillRawData( edm::Event& e,
             L1MuDTChambPhContainer::Phi_Container& phi_data,
             L1MuDTChambThContainer::The_Container& the_data,
-		    L1MuDTChambPhContainer::Phi_Container& phi_out_data,
-Collections& colls );
+	    L1MuDTChambPhContainer::Phi_Container& phi_out_data,
+            Collections& colls );
 
   void processFed( int twinmuxfed, int wheel, std::array<short, 12> twinMuxAmcSec,
            edm::Handle<FEDRawDataCollection> data,
            L1MuDTChambPhContainer::Phi_Container& phi_data,
            L1MuDTChambThContainer::The_Container& the_data,
-		   L1MuDTChambPhContainer::Phi_Container& phi_out_data, Collections& colls );
+	   L1MuDTChambPhContainer::Phi_Container& phi_out_data, 
+	   Collections& colls );
 
 private:
   
@@ -125,17 +127,15 @@ private:
   int ring=-99, link=-99, indx=-99, eta=-99, phi=99;
   
   struct HOEmap {
-  //    HOEmap() {
-  int iCrate; //std::vector<int> iCrate;    
-  int iHTR; //std::vector<int> iHtr;
-  int iSector; //std::vector<int> iSector;
+  int iCrate; 
+  int iHTR; 
+  int iSector;
   signed int iWheel;
   int iChan;
-  int iEta; //std::vector<int> iEta;
-  int iPhi; //std::vector<int> iPhi;
+  int iEta; 
+  int iPhi; 
   int iLink;
-  int iBitloc;// std::vector<int> iBitloc;
-  // }
+  int iBitloc;
 };
   std::vector<HOEmap> hoemap;
   
