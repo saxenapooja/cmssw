@@ -71,11 +71,12 @@ class HOTPDigiTwinMux {
   /// get the sector value
   int sector() const {return (theTP_HO>>19)&0xF; }
   
-  /// get the index
-  int index() const {return (theTP_HO>>23)&0x1F; } //channel index in Twinmux protocal 
+  //  int index() const {return (theTP_HO>>23)&0x1F; } //channel index in Twinmux protocal                                                                                  
+  int index() const {return (theTP_HO>>23)&0x3F; } //channel index in Twinmux protocal                                                                                      
 
-  /// get the link value
-  int link() const {return (theTP_HO>>28)&0x3; } //two link for all HO wheels
+  /// get the link value                                                                                                                                                    
+  //  int link() const {return (theTP_HO>>28)&0x3; } //two link for all HO wheels, modified on Jul 11                                                                       
+  int link() const {return (theTP_HO>>29)&0x7; } //two link for all HO wheels, modified on Jul 11                                                                           
 
   static const int HO_SECTOR_MAX = 12;
 
