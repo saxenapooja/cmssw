@@ -29,7 +29,20 @@ public:
                            int numberOfSamples,   int numberOfPresamples,
                            int numberOfSamplesHF, int numberOfPresamplesHF,
                            uint32_t minSignalThreshold=0, uint32_t PMT_NoiseThreshold=0);
+
+  HcalTriggerPrimitiveAlgo( const std::vector<double>& w,
+                            int latency,
+                            int numberOfSamples,   int numberOfPresamples,
+                            unsigned int muonBitThreshold_high, unsigned int muonBitThreshold_low);
+
   ~HcalTriggerPrimitiveAlgo();
+
+
+  void run(const HcalTPGCoder* incoder,
+           const HODigiCollection& hoDigis,
+           HOTrigPrimDigiCollection& result,
+           const HcalTrigTowerGeometry* trigTowerGeometry);
+
 
   template<typename... Digis>
   void run(const HcalTPGCoder* incoder,
@@ -61,6 +74,7 @@ public:
      }
   };
 
+  void addSignal(const HODataFrame & frame);
   void runZS(HcalTrigPrimDigiCollection& tp);
   void runFEFormatError(const FEDRawDataCollection* rawraw,
                         const HcalElectronicsMap* emap,
@@ -86,6 +100,8 @@ public:
   bool validUpgradeFG(const HcalTrigTowerDetId& id, int depth) const;
   bool validChannel(const QIE10DataFrame& digi, int ts) const;
 
+  // for HO
+  void analyzeHO(IntegerCaloSamples & samples, HOTriggerPrimitiveDigi & result);
   /// adds the actual RecHits
   void analyze(IntegerCaloSamples & samples, HcalTriggerPrimitiveDigi & result);
   // 2017: QIE11
@@ -123,6 +139,10 @@ public:
   int numberOfPresamples_;
   int numberOfSamplesHF_;
   int numberOfPresamplesHF_;
+  unsigned int muonBitThreshold_high_;
+  unsigned int muonBitThreshold_low_;
+  unsigned int firstSample_;
+  unsigned int sampleToAdd_;
   uint32_t minSignalThreshold_;
   uint32_t PMT_NoiseThreshold_; 
   int NCTScaleShift;
@@ -162,6 +182,11 @@ public:
   typedef std::vector<IntegerCaloSamples> SumFGContainer;
   typedef std::map< HcalTrigTowerDetId, SumFGContainer > TowerMapFGSum;
   TowerMapFGSum theTowerMapFGSum;
+
+  //HO
+  typedef std::vector<IntegerCaloSamples> SumMuContainer;
+  typedef std::map< HcalTrigTowerDetId, SumMuContainer > MapMuBit;
+  MapMuBit theHOMapMuSum;
 
   // ==============================
   // =  HF Veto
