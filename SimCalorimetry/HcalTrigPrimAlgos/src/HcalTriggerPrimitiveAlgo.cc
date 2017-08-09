@@ -51,6 +51,21 @@ HcalTriggerPrimitiveAlgo::HcalTriggerPrimitiveAlgo( bool pf, const std::vector<d
 }
 
 
+HcalTriggerPrimitiveAlgo::HcalTriggerPrimitiveAlgo( const std::vector<double>& w,
+                                                    int latency,
+                                                    int numberOfSamples, int numberOfPresamples,
+                                                    unsigned int muonBitThreshold_high, unsigned int muonBitThreshold_low)
+  : incoder_(0),
+    theThreshold(0), weights_(w), latency_(latency),
+    numberOfSamples_(numberOfSamples),
+    numberOfPresamples_(numberOfPresamples),
+    muonBitThreshold_high_(muonBitThreshold_high),
+    muonBitThreshold_low_(muonBitThreshold_low)
+{
+ 
+}
+
+
 HcalTriggerPrimitiveAlgo::~HcalTriggerPrimitiveAlgo() {
 }
 
@@ -77,6 +92,37 @@ HcalTriggerPrimitiveAlgo::overrideParameters(const edm::ParameterSet& ps)
       override_tdc_hf_ = true;
       override_tdc_hf_value_ = override_parameters_.getParameter<unsigned long long>("TDCMaskHF");
    }
+}
+
+
+// run for HOTPs
+void HcalTriggerPrimitiveAlgo::run(const HcalTPGCoder* incoder,
+				   const HODigiCollection& hoDigis,
+                                   HOTrigPrimDigiCollection& result,
+				   const HcalTrigTowerGeometry* trigTowerGeometry) {
+
+  theTrigTowerGeometry = trigTowerGeometry;
+  incoder_=dynamic_cast<const HcaluLUTTPGCoder*>(incoder);
+  
+  theSumMap.clear();
+  //  fgMap_.clear();
+  
+  // do the HO digis
+  for(HODigiCollection::const_iterator hoItr = hoDigis.begin(); hoItr != hoDigis.end(); ++hoItr) {
+    addSignal(*hoItr);
+  }
+  
+  // typedef std::map<HcalTrigTowerDetId, IntegerCaloSamples> SumMap
+  for(SumMap::iterator mapItr = theSumMap.begin(); mapItr != theSumMap.end(); ++mapItr) 
+    {
+      result.push_back(HOTriggerPrimitiveDigi(mapItr->first));
+      HcalTrigTowerDetId detId(mapItr->second.id());
+      
+      if(detId.ietaAbs() <= 15)  { //hard coded for now
+	analyzeHO(mapItr->second, result.back());
+      }
+    }
+  return;
 }
 
 
@@ -193,6 +239,52 @@ void HcalTriggerPrimitiveAlgo::addSignal(const HFDataFrame & frame) {
       }
    }
 }
+
+
+
+void HcalTriggerPrimitiveAlgo::addSignal(const HODataFrame & frame) {
+  if (frame.id().depth()==4) {
+    std::vector<HcalTrigTowerDetId> ids = theTrigTowerGeometry->towerIds(frame.id());
+    assert(ids.size() == 1);
+    
+    IntegerCaloSamples samples(ids[0], int(frame.size()));
+    samples.setPresamples(frame.presamples());
+    incoder_->adc2Linear(frame, samples);
+    addSignal(samples); 
+    
+    
+    if ( theHOMapMuSum.find(ids[0]) == theHOMapMuSum.end() ) {
+      SumMuContainer sumMu;
+      theHOMapMuSum.insert(std::pair<HcalTrigTowerDetId, SumMuContainer >(ids[0], sumMu));
+    }
+    
+    SumMuContainer& sumMu = theHOMapMuSum[ids[0]];
+    SumMuContainer::iterator sumMuItr;
+    for ( sumMuItr = sumMu.begin(); sumMuItr != sumMu.end(); ++sumMuItr) {
+    }
+    
+    // If find
+    if (sumMuItr != sumMu.end()) {
+      for (int i=0; i<samples.size(); ++i) (*sumMuItr)[i] += samples[i];
+    }
+    else {
+      // Copy samples (change to fgid)
+      IntegerCaloSamples sumMuSamples(frame.id(), samples.size());
+      sumMuSamples.setPresamples(samples.presamples());
+      for (int i=0; i<samples.size(); ++i) sumMuSamples[i] += samples[i];
+      sumMu.push_back(sumMuSamples);
+    }
+    
+    unsigned short energy = 0;
+    for (int i=0; i < samples.size(); ++i) {
+      unsigned short fC =  incoder_->adc2Linear(frame.sample(i), frame.id());
+      energy += fC;
+    }
+    //EMap.insert(std::make_pair(ids[0], energy));    
+    
+  }
+}
+
 
 void
 HcalTriggerPrimitiveAlgo::addSignal(const QIE10DataFrame& frame)
@@ -345,6 +437,70 @@ void HcalTriggerPrimitiveAlgo::analyze(IntegerCaloSamples & samples, HcalTrigger
       }
    }
    outcoder_->compress(output, finegrain, result);
+}
+
+
+
+
+void HcalTriggerPrimitiveAlgo::analyzeHO(IntegerCaloSamples & samples, HOTriggerPrimitiveDigi & result) {
+
+  HcalTrigTowerDetId detId(samples.id());
+  IntegerCaloSamples sum(samples.id(), samples.size());
+  
+  // Align digis and TP
+  int dgPresamples = samples.presamples(); 
+  int tpPresamples = numberOfPresamples_;
+  int shift        = dgPresamples - tpPresamples;
+  int dgSamples    = samples.size();
+  int tpSamples    = numberOfSamples_;
+  
+  IntegerCaloSamples output(samples.id(), tpSamples);
+  output.setPresamples(tpPresamples);
+  
+  if(shift < 0 || shift + tpSamples > dgSamples) {
+    edm::LogInfo("HcalTriggerPrimitiveAlgo::analyzeHO") << 
+      "TP presample or size from the configuration file is out of the accessible range. Using digi values from data instead...";
+    tpPresamples=dgPresamples;
+    shift=0;
+    tpSamples=dgSamples;
+  }
+  
+  MapMuBit::const_iterator tower2Mubit = theHOMapMuSum.find(detId);
+  assert(tower2Mubit != theHOMapMuSum.end());
+  
+  const SumMuContainer& sumMu = tower2Mubit->second;
+  
+  int databit = 0;
+  bool isMip    = false;
+  
+  for (SumMuContainer::const_iterator sumMuItr = sumMu.begin(); sumMuItr != sumMu.end(); ++sumMuItr) 
+    {
+      unsigned int maxPair = 0;
+      unsigned  int finalPair =  0;
+      
+      for (int ibin = 0; ibin <= tpSamples; ++ibin) 
+	{
+	    int idx = ibin + shift;
+	    //int idx = ibin;//
+	    // isPeak = (samples[idx] > samples[idx-1] && samples[idx] >= samples[idx+1] && samples[idx] > theThreshold);
+	    
+	  unsigned int minBound  = (*sumMuItr)[idx-2] + (*sumMuItr)[idx-1] ;
+	  unsigned int maxBound  = (*sumMuItr)[idx-1] + (*sumMuItr)[idx] ;
+	  
+	  maxPair = ((minBound > maxBound) ? minBound : maxBound);
+	  finalPair = (maxPair > finalPair) ? maxPair : finalPair ;
+	  bool isPeak = false;
+
+	  if(ibin == 1) isPeak = (minBound >= maxBound) && ( minBound >= finalPair) && (*sumMuItr)[ibin+1] >  (*sumMuItr)[ibin-1];
+	  else  isPeak = (minBound >= maxBound) && ( minBound >= finalPair);
+	  
+	  isMip = isPeak && ( (minBound >= muonBitThreshold_low_ && minBound < muonBitThreshold_high_));// && (ibin >= 1);
+	  databit = isMip << (ibin-2);
+	  if(isMip) break;
+	}
+    }
+  if(isMip) result = HOTriggerPrimitiveDigi(detId.ieta(), detId.iphi(), tpSamples, tpPresamples, databit);
+  // else ??
 }
 
 
