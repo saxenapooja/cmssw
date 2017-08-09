@@ -111,7 +111,9 @@ void HcaluLUTTPGCoder::update(const char* filename, bool appendMSB) {
     if (subdetStr == "HB") subdet.push_back(HcalBarrel);
     else if (subdetStr == "HE") subdet.push_back(HcalEndcap);
     else if (subdetStr == "HF") subdet.push_back(HcalForward);
-    //TODO Check subdet
+    else if (subdetStr == "HO") subdet.push_back(HcalOuter);
+  
+  //TODO Check subdet
     //else exception
     index += 2;
     index = buffer.find("H", index);
@@ -356,6 +358,16 @@ void HcaluLUTTPGCoder::update(const HcalDbService& conditions) {
      } // endif HF
   }// for cell
 }
+
+void HcaluLUTTPGCoder::adc2Linear(const HODataFrame& df, IntegerCaloSamples& ics) const {
+  int lutId = getLUTId(df.id());
+  const Lut& lut = inputLUT_.at(lutId);
+
+  for (int i=0; i<df.size(); i++){
+    ics[i] = (lut.at(df[i].adc()) & 0x3FF);
+  }
+}
+
 
 void HcaluLUTTPGCoder::adc2Linear(const HBHEDataFrame& df, IntegerCaloSamples& ics) const {
   int lutId = getLUTId(df.id());
