@@ -34,6 +34,7 @@ public:
 
   HcaluLUTTPGCoder(const HcalTopology* topo);
   virtual ~HcaluLUTTPGCoder();
+  virtual void adc2Linear(const HODataFrame& df, IntegerCaloSamples& ics) const;
   virtual void adc2Linear(const HBHEDataFrame& df, IntegerCaloSamples& ics) const override;
   virtual void adc2Linear(const HFDataFrame& df, IntegerCaloSamples& ics) const override;
   virtual void adc2Linear(const QIE10DataFrame& df, IntegerCaloSamples& ics) const override;
