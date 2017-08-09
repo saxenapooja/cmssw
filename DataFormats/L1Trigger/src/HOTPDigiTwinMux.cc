@@ -16,7 +16,9 @@ HOTPDigiTwinMux::HOTPDigiTwinMux(int ieta, int iphi, int bx, int mip, int validb
     ((validbit&0x1)<<15) |
     ((abs(wheel)&0x3)<<16) | ((wheel<0)?(0x40000) : (0x00)) |
     ((sector&0xF)<<19) | 
-    ((index &0x1F)<<23) | ((link&0x3)<<28);
+  //  ((index &0x1F)<<23) | ((link&0x3)<<28);
+        ((index &0x3F)<<23) | ((link&0x7)<<29);
+
 }
 
 std::ostream& operator<<(std::ostream& s, const HOTPDigiTwinMux& HOtp) {
